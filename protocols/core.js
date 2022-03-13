@@ -1,5 +1,6 @@
 const EventEmitter = require('events').EventEmitter;
 const net = require('net');
+const got = require('got');
 const Reader = require('../lib/reader');
 const HexUtil = require('../lib/HexUtil');
 const Promises = require('../lib/Promises');
