@@ -45,6 +45,7 @@ this query port may work instead. (defaults to protocol default port)
  as the socketTimeout typically fires first. (default 10000)
 * **givenPortOnly**: boolean - Only attempt to query server on given port. (default false)
 * **debug**: boolean - Enables massive amounts of debug logging to stdout. (default false)
+* **requestRules**: boolean - Valve games only. Additional 'rules' may be fetched into the `raw` field. (default false)
 
 ### Return Value
 
@@ -246,10 +247,12 @@ Games List
 | `flashpointresistance` | Operation Flashpoint: Resistance (2002)
 | `painkiller` | Painkiller
 | `pixark`   | PixARK (2018) | [Valve Protocol](#valve)
+| `ps`       | Post Scriptum
 | `postal2`  | Postal 2
 | `prey`     | Prey
 | `primalcarnage` | Primal Carnage: Extinction | [Valve Protocol](#valve)
 | `prbf2`    | Project Reality: Battlefield 2 (2005)
+| `przomboid` | Project Zomboid | [Valve Protocol](#valve)
 | `quake1`   | Quake 1: QuakeWorld (1996)
 | `quake2`   | Quake 2 (1997)
 | `quake3`   | Quake 3: Arena (1999)
@@ -449,12 +452,15 @@ Pass the login into to GameDig with the additional options: login, password
 For teamspeak 3 queries to work correctly, the following permissions must be available for the guest server group:
 
 * Virtual Server
- * b_virtualserver_info_view
- * b_virtualserver_channel_list
- * b_virtualserver_client_list
+* b_virtualserver_info_view
+* b_virtualserver_channel_list
+* b_virtualserver_client_list
 * Group
- * b_virtualserver_servergroup_list
- * b_virtualserver_channelgroup_list
+* b_virtualserver_servergroup_list
+* b_virtualserver_channelgroup_list
+
+In the extremely unusual case that your server host responds to queries on a non-default port (the default is 10011),
+you can specify their host query port using the teamspeakQueryPort option.
 
 ### Terraria
 Requires tshock server mod, and a REST user token, which can be passed to GameDig with the
@@ -462,6 +468,9 @@ additional option: `token`
 
 ### Valheim
 Valheim servers will only respond to queries if they are started in public mode (`-public 1`).
+
+### DayZ
+DayZ stores some of it's servers information inside the `tags` attribute. Make sure to set `requestRules: true` to access it. Some data inside `dayzMods` attribute may be fuzzy, due to how mods are loaded into the servers. Alternatively, some servers may have a [third party tool](https://dayzsalauncher.com/#/tools) that you can use to get the mods information. If it's installed, you can access it via browser with the game servers IP:PORT, but add up 10 to the port. (eg. if game port is 2302 then use 2312).
 
 ### <a name="valve"></a>Valve Protocol
 For many valve games, additional 'rules' may be fetched into the unstable `raw` field by passing the additional
@@ -517,4 +526,4 @@ gamedig --type minecraft mc.example.com:11234
 ```
 
 The output of the command will be in JSON format. Additional advanced parameters can be passed in
-as well: `--debug`, `--pretty`, `--socketTimeout 5000`, etc.
+as well: `--debug`, `--pretty`, `--socketTimeout 5000`, `--requestRules` etc.

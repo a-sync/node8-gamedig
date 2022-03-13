@@ -1,12 +1,14 @@
-const Bzip2 = require('compressjs').Bzip2,
-    Core = require('./core'),
-    Results = require('../lib/Results');
+const Bzip2 = require('compressjs').Bzip2;
+const Core = require('./core');
+const Results = require('../lib/Results');
+const Reader = require('../lib/reader');
 
 const AppId = {
     Squad: 393380,
     Bat1944: 489940,
     Ship: 2400,
-    DayZ: 221100
+    DayZ: 221100,
+    Rust: 252490
 };
 
 class Valve extends Core {
@@ -45,8 +47,8 @@ class Valve extends Core {
     async queryInfo(/** Results */ state) {
         this.debugLog("Requesting info ...");
         const b = await this.sendPacket(
-            0x54,
-            'Source Engine Query\0',
+            this.goldsrcInfo ? undefined : 0x54,
+            this.goldsrcInfo ? 'details' : 'Source Engine Query\0',
             this.goldsrcInfo ? 0x6D : 0x49,
             false
         );
@@ -60,19 +62,15 @@ class Valve extends Core {
         state.map = reader.string();
         state.raw.folder = reader.string();
         state.raw.game = reader.string();
-        state.raw.appId = reader.uint(2);
+        if(!this.goldsrcInfo) state.raw.appId = reader.uint(2);
         state.raw.numplayers = reader.uint(1);
         state.maxplayers = reader.uint(1);
 
         if(this.goldsrcInfo) state.raw.protocol = reader.uint(1);
         else state.raw.numbots = reader.uint(1);
 
-        state.raw.listentype = reader.uint(1);
-        state.raw.environment = reader.uint(1);
-        if(!this.goldsrcInfo) {
-            state.raw.listentype = String.fromCharCode(state.raw.listentype);
-            state.raw.environment = String.fromCharCode(state.raw.environment);
-        }
+        state.raw.listentype = String.fromCharCode(reader.uint(1));
+        state.raw.environment = String.fromCharCode(reader.uint(1));
 
         state.password = !!reader.uint(1);
         if(this.goldsrcInfo) {
@@ -86,12 +84,8 @@ class Valve extends Core {
                 state.raw.modtype = reader.uint(1);
                 state.raw.moddll = reader.uint(1);
             }
-        }
-        state.raw.secure = reader.uint(1);
-
-        if(this.goldsrcInfo) {
-            state.raw.numbots = reader.uint(1);
         } else {
+            state.raw.secure = reader.uint(1);
             if(state.raw.appId === AppId.Ship) {
                 state.raw.shipmode = reader.uint(1);
                 state.raw.shipwitnesses = reader.uint(1);
@@ -115,6 +109,8 @@ class Valve extends Core {
             }
         }
 
+        const appId = state.raw.appId;
+
         // from https://developer.valvesoftware.com/wiki/Server_queries
         if(
             state.raw.protocol === 7 && (
@@ -130,6 +126,56 @@ class Valve extends Core {
         if(state.raw.protocol === 48) {
             this.logger.debug("GOLDSRC DETECTED - USING MODIFIED SPLIT FORMAT");
             this.goldsrcSplits = true;
+        }
+
+        // DayZ embeds some of the server information inside the tags attribute
+        if (appId === AppId.DayZ) {
+            if (state.raw.tags) {
+                state.raw.dlcEnabled = false
+                state.raw.firstPerson = false
+                for (const tag of state.raw.tags) {
+                    if (tag.startsWith('lqs')) {
+                        const value = parseInt(tag.replace('lqs', ''));
+                        if (!isNaN(value)) {
+                            state.raw.queue = value;
+                        }
+                    }
+                    if (tag.includes('no3rd')) {
+                        state.raw.firstPerson = true;
+                    }
+                    if (tag.includes('isDLC')) {
+                        state.raw.dlcEnabled = true;
+                    }
+                    if (tag.includes(':')) {
+                        state.raw.time = tag;
+                    }
+                    if (tag.startsWith('etm')) {
+                        const value = parseInt(tag.replace('etm', ''));
+                        if (!isNaN(value)) {
+                            state.raw.dayAcceleration = value;
+                        }
+                    }
+                    if (tag.startsWith('entm')) {
+                        const value = parseInt(tag.replace('entm', ''));
+                        if (!isNaN(value)) {
+                            state.raw.nightAcceleration = value;
+                        }
+                    }
+                }
+            }
+        }
+
+        if (appId === AppId.Rust) {
+            if (state.raw.tags) {
+                for (const tag of state.raw.tags) {
+                    if (tag.startsWith('mp')) {
+                        const value = parseInt(tag.replace('mp', ''));
+                        if (!isNaN(value)) {
+                            state.maxplayers = value;
+                        }
+                    }
+                }
+            }
         }
     }
 
@@ -152,8 +198,8 @@ class Valve extends Core {
 
         this.debugLog("Requesting player list ...");
         const b = await this.sendPacket(
-            0x55,
-            null,
+            this.goldsrcInfo ? undefined : 0x55,
+            this.goldsrcInfo ? 'players' : null,
             0x44,
             true
         );
@@ -200,36 +246,49 @@ class Valve extends Core {
 
         const rules = {};
         state.raw.rules = rules;
-        this.debugLog("Requesting rules ...");
-        const b = await this.sendPacket(0x56,null,0x45,true);
-        if (b === null) return; // timed out - the server probably has rules disabled
-
         const dayZPayload = [];
-        let dayZPayloadEnded = false;
 
-        const reader = this.reader(b);
-        const num = reader.uint(2);
-        for(let i = 0; i < num; i++) {
-            if (appId === AppId.DayZ && !dayZPayloadEnded) {
-                const one = reader.uint(1);
-                const two = reader.uint(1);
-                const three = reader.uint(1);
-                if (one !== 0 && two !== 0 && three === 0) {
-                    while (true) {
-                        const byte = reader.uint(1);
-                        if (byte === 0) break;
-                        dayZPayload.push(byte);
-                    }
-                    continue;
-                } else {
-                    reader.skip(-3);
-                    dayZPayloadEnded = true;
-                }
+        this.debugLog("Requesting rules ...");
+
+        if (this.goldsrcInfo) {
+            const b = await this.udpSend('\xff\xff\xff\xffrules', b=>b, ()=>null);
+            if (b === null) return; // timed out - the server probably has rules disabled
+            const reader = this.reader(b);
+            while (!reader.done()) {
+                const key = reader.string();
+                const value = reader.string();
+                rules[key] = value;
             }
+        } else {
+            const b = await this.sendPacket(0x56,null,0x45,true);
+            if (b === null) return; // timed out - the server probably has rules disabled
 
-            const key = reader.string();
-            const value = reader.string();
-            rules[key] = value;
+            let dayZPayloadEnded = false;
+
+            const reader = this.reader(b);
+            const num = reader.uint(2);
+            for (let i = 0; i < num; i++) {
+                if (appId === AppId.DayZ && !dayZPayloadEnded) {
+                    const one = reader.uint(1);
+                    const two = reader.uint(1);
+                    const three = reader.uint(1);
+                    if (one !== 0 && two !== 0 && three === 0) {
+                        while (true) {
+                            const byte = reader.uint(1);
+                            if (byte === 0) break;
+                            dayZPayload.push(byte);
+                        }
+                        continue;
+                    } else {
+                        reader.skip(-3);
+                        dayZPayloadEnded = true;
+                    }
+                }
+
+                const key = reader.string();
+                const value = reader.string();
+                rules[key] = value;
+            }
         }
 
         // Battalion 1944 puts its info into rules fields for some reason
@@ -263,29 +322,6 @@ class Valve extends Core {
 
         if (appId === AppId.DayZ) {
             state.raw.dayzMods = this.readDayzMods(Buffer.from(dayZPayload));
-
-            if (state.raw.tags) {
-                for (const tag of state.raw.tags) {
-                    if (tag.startsWith('lqs')) {
-                        const value = parseInt(tag.replace('lqs', ''));
-                        if (!isNaN(value)) {
-                            state.raw.queue = value;
-                        }
-                    }
-                    if (tag.startsWith('etm')) {
-                        const value = parseInt(tag.replace('etm', ''));
-                        if (!isNaN(value)) {
-                            state.raw.dayAcceleration = value;
-                        }
-                    }
-                    if (tag.startsWith('entm')) {
-                        const value = parseInt(tag.replace('entm', ''));
-                        if (!isNaN(value)) {
-                            state.raw.nightAcceleration = value;
-                        }
-                    }
-                }
-            }
         }
     }
 
@@ -306,26 +342,39 @@ class Valve extends Core {
         this.logger.debug("overflow " + overflow);
         this.logger.debug("dlc1 " + dlc1);
         this.logger.debug("dlc2 " + dlc2);
+        if (dlc1) {
+            const unknown = this.readDayzUint(reader, 4); // ?
+            this.logger.debug("unknown " + unknown);
+        }
+        if (dlc2) {
+            const unknown = this.readDayzUint(reader, 4); // ?
+            this.logger.debug("unknown " + unknown);
+        }
         const mods = [];
         mods.push(...this.readDayzModsSection(reader, true));
         mods.push(...this.readDayzModsSection(reader, false));
+        this.logger.debug("dayz buffer rest:", reader.rest());
         return mods;
     }
-    readDayzModsSection(reader, withHeader) {
+    readDayzModsSection(/** Reader */ reader, withHeader) {
         const out = [];
         const count = this.readDayzByte(reader);
+        this.logger.debug("dayz mod section withHeader:" + withHeader + " count:" + count);
         for(let i = 0; i < count; i++) {
+            if (reader.done()) break;
             const mod = {};
             if (withHeader) {
-                const unknown = this.readDayzUint(reader, 4); // mod hash?
-                if (i !== count - 1) {
-                    // For some reason this is 4 on all of them, but doesn't exist on the last one?
-                    const flag = this.readDayzByte(reader);
-                    //mod.flag = flag;
-                }
+                mod.unknown = this.readDayzUint(reader, 4); // ?
+
+                // For some reason this is 4 on all of them, but doesn't exist on the last one? but only sometimes?
+                const offset = reader.offset();
+                const flag = this.readDayzByte(reader);
+                if (flag !== 4) reader.setOffset(offset);
+
                 mod.workshopId = this.readDayzUint(reader, 4);
             }
             mod.title = this.readDayzString(reader);
+            this.logger.debug(mod);
             out.push(mod);
         }
         return out;
@@ -369,7 +418,7 @@ class Valve extends Core {
             return botProbability(a) - botProbability(b);
         });
         delete state.raw.players;
-        const numBots = state.raw.numbots;
+        const numBots = state.raw.numbots || 0;
         const numPlayers = state.raw.numplayers - numBots;
         while(state.bots.length < numBots) {
             if (sortedPlayers.length) state.bots.push(sortedPlayers.pop());
@@ -448,7 +497,8 @@ class Valve extends Core {
 
         if (typeof payload === 'string') payload = Buffer.from(payload, 'binary');
 
-        const b = Buffer.alloc(5
+        const b = Buffer.alloc(4
+            + (type !== undefined ? 1 : 0)
             + (challengeAtBeginning ? 4 : 0)
             + (challengeAtEnd ? 4 : 0)
             + (payload ? payload.length : 0)
@@ -461,8 +511,10 @@ class Valve extends Core {
         b.writeInt32LE(-1, offset);
         offset += 4;
 
-        b.writeUInt8(type, offset);
-        offset += 1;
+        if (type !== undefined) {
+            b.writeUInt8(type, offset);
+            offset += 1;
+        }
 
         if (challengeAtBeginning) {
             if (this.byteorder === 'le') b.writeUInt32LE(challenge, offset);
