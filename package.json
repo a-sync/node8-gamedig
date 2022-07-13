@@ -1,5 +1,5 @@
 {
-    "name": "gamedig",
+    "name": "node8-gamedig",
     "description": "Query for the status of any game server in Node.JS",
     "tags": [
         "srcds",
@@ -27,10 +27,10 @@
     "version": "4.0.4",
     "repository": {
         "type": "git",
-        "url": "https://github.com/gamedig/node-gamedig.git"
+        "url": "https://github.com/a-sync/node8-gamedig.git"
     },
     "bugs": {
-        "url": "https://github.com/gamedig/node-gamedig/issues"
+        "url": "https://github.com/a-sync/node8-gamedig/issues"
     },
     "license": "MIT",
     "engines": {
